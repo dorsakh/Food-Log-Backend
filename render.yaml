@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: foodlog-backend
+    env: docker
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: STORAGE_BACKEND
+        value: sqlite
+      - key: ML_SERVICE_URL
+        value: stub
+      - key: ML_SERVICE_API_KEY
+        value: ""
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: UPLOADS_DIR
+        value: /data/uploads
+      - key: SQLITE_DB_PATH
+        value: /data/db/food_history.db
+    disk:
+      name: persistent-data
+      mountPath: /data
+      sizeGB: 1

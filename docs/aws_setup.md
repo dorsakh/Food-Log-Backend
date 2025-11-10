@@ -50,7 +50,8 @@ Copy `config/aws.example.json` to `config/aws.json` (or add variables to `.env`)
 - `AWS_BUCKET_NAME`: bucket name from step 2.
 - `AWS_DYNAMODB_TABLE`: `FoodLogHistory`.
 - `AWS_USERS_TABLE`: `FoodLogUsers`.
-- `ML_SERVICE_URL`: endpoint for your inference service.
+- `AWS_S3_ACL`: optional object ACL to apply (`public-read` by default, leave empty if the bucket uses Object Ownership "Bucket owner enforced"`).
+- `ML_SERVICE_URL`: endpoint for your inference service (set to `stub` for temporary random responses).
 - `ML_SERVICE_API_KEY`: optional bearer token for the ML service.
 - `JWT_SECRET_KEY`: long random string (`openssl rand -hex 32`).
 - `STORAGE_BACKEND`: must be `aws` for production deployments.
@@ -63,7 +64,8 @@ export AWS_REGION=us-east-1
 export AWS_BUCKET_NAME=food-log-uploads-example
 export AWS_DYNAMODB_TABLE=FoodLogHistory
 export AWS_USERS_TABLE=FoodLogUsers
-export ML_SERVICE_URL=https://ml-service.example.com/predict
+export AWS_S3_ACL=public-read      # Set to empty if ACLs are disabled
+export ML_SERVICE_URL=stub  # Replace with real endpoint when ready
 export ML_SERVICE_API_KEY=replaceme
 export JWT_SECRET_KEY=$(openssl rand -hex 32)
 gunicorn -b 0.0.0.0:5000 app:create_app()
@@ -73,4 +75,3 @@ Hit `/health` and `/history` to ensure the app can talk to AWS. The first call t
 
 ## 7. Optional: Infrastructure as code
 If you prefer declarative provisioning, translate the steps above into CloudFormation, Terraform, or CDK. The table and bucket configuration above map directly to those templates.
-
