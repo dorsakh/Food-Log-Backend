@@ -3,6 +3,7 @@ services:
     name: foodlog-backend
     env: docker
     plan: starter
+    region: oregon
     autoDeploy: true
     envVars:
       - key: STORAGE_BACKEND
