@@ -37,7 +37,6 @@ from api.ml_service import MLServiceError, call_ml_service
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_HF_MODEL_URL = "https://router.huggingface.co/hf-inference/models/nateraw/food"
-DEFAULT_HF_READ_TOKEN = "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"
 UPLOADS_DIR = Path(os.environ.get("UPLOADS_DIR", str(BASE_DIR / "uploads"))).resolve()
 DB_PATH = Path(os.environ.get("SQLITE_DB_PATH", str(BASE_DIR / "food_history.db"))).resolve()
 
@@ -397,7 +396,8 @@ def create_app() -> Flask:
     os.environ.get("ML_SERVICE_API_KEY", "").strip()
     or os.environ.get("HF_API_TOKEN", "").strip()
     or os.environ.get("HF_TOKEN", "").strip()
-    or DEFAULT_HF_READ_TOKEN
+    or os.environ.get("HF_SPACE_TOKEN", "").strip()
+    or None
   )
 
   def _unauthorized(message: str) -> None:
@@ -600,7 +600,7 @@ def create_app() -> Flask:
     food_name, calories, ingredients, nutrition = _normalise_prediction(raw_prediction)
     resolved_food = str(raw_prediction.get("food") or food_name or "Meal")
     food_name = resolved_food
-    ingredients = ["xxx"]
+    ingredients = ["xxx", "xxx", "xxx"]
     display_calories = "xxx"
     display_nutrition = {
       "calories": "xxx",

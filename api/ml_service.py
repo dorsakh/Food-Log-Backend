@@ -182,6 +182,11 @@ def call_ml_service(
     return _build_stub_prediction()
 
   if "huggingface.co" in normalised_url or "hf-inference" in normalised_url:
+    if not api_key:
+      raise MLServiceError(
+        "Hugging Face inference requires an API token. "
+        "Set ML_SERVICE_API_KEY, HF_API_TOKEN, HF_TOKEN, or HF_SPACE_TOKEN."
+      )
     return _call_hf_inference_api(image_bytes, url, api_key, timeout)
 
   files = {
