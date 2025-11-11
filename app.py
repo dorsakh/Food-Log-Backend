@@ -150,13 +150,16 @@ def _coerce_prediction_payload(raw: Any) -> Dict[str, Any]:
     except (TypeError, ValueError):
       score = 0.0
     food_name = label if label and score >= 0.8 else "not food"
-    return {
+    result = {
       "food": food_name or "not food",
       "confidence": score,
       "ingredients": [],
       "calories": 0,
       "nutrition_facts": {},
     }
+    if label:
+      result["raw_label"] = label
+    return result
 
   if isinstance(raw, dict):
     return raw
@@ -595,7 +598,9 @@ def create_app() -> Flask:
         temp_path.unlink(missing_ok=True)
 
     food_name, calories, ingredients, nutrition = _normalise_prediction(raw_prediction)
-    ingredients = []
+    resolved_food = str(raw_prediction.get("food") or food_name or "Meal")
+    food_name = resolved_food
+    ingredients = ["xxx"]
     display_calories = "xxx"
     display_nutrition = {
       "calories": "xxx",
