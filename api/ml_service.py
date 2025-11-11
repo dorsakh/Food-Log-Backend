@@ -89,7 +89,7 @@ def _call_hf_inference_api(
   """
   headers = {
     "Accept": "application/json",
-    "Content-Type": "application/octet-stream",
+    "Content-Type": "image/jpeg",
   }
   if api_key:
     headers["Authorization"] = f"Bearer {api_key}"
