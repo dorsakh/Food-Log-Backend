@@ -8,10 +8,9 @@ import json
 import logging
 import os
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import requests
-from huggingface_hub import InferenceClient
 
 logger = logging.getLogger(__name__)
 
@@ -171,93 +170,4 @@ def call_ml_service(
     raise MLServiceError("ML service did not return JSON.") from exc
 
 
-def _serialise_hf_predictions(predictions: Any, top_k: int = 5) -> List[Dict[str, Any]]:
-  """Convert Hugging Face classification outputs into JSON-friendly dicts."""
-  serialised: List[Dict[str, Any]] = []
-  for candidate in predictions or []:
-    label = None
-    score = None
-    if isinstance(candidate, dict):
-      label = candidate.get("label") or candidate.get("class")
-      score = candidate.get("score") or candidate.get("confidence")
-    else:
-      label = getattr(candidate, "label", None)
-      score = getattr(candidate, "score", None)
-
-    if label is None:
-      continue
-    try:
-      score_value = float(score) if score is not None else 0.0
-    except (TypeError, ValueError):
-      score_value = 0.0
-
-    serialised.append(
-      {
-        "label": str(label),
-        "score": score_value,
-      }
-    )
-    if top_k and len(serialised) >= top_k:
-      break
-  return serialised
-
-
-def classify_food_with_hf(
-  image_bytes: bytes,
-  *,
-  api_key: str,
-  model: str = "nateraw/food",
-  provider: Optional[str] = "auto",
-  top_k: int = 5,
-) -> Dict[str, Any]:
-  """
-  Run the uploaded image through a Hugging Face Inference Provider model.
-
-  Parameters
-  ----------
-  image_bytes:
-      Raw uploaded bytes.
-  api_key:
-      HF token with access to Inference Endpoints / Providers.
-  model:
-      Repository ID of the image classification model (default: ``nateraw/food``).
-  provider:
-      Optional provider hint (``auto`` lets HF choose automatically).
-  top_k:
-      Number of ranked candidates to include in the response payload.
-  """
-  if not api_key:
-    raise MLServiceError("HF token is not configured.")
-  cleaned_model = (model or "").strip()
-  if not cleaned_model:
-    raise MLServiceError("HF model ID is not configured.")
-
-  client_kwargs: Dict[str, Any] = {"api_key": api_key}
-  provider_hint = (provider or "").strip()
-  if provider_hint:
-    client_kwargs["provider"] = provider_hint
-  client = InferenceClient(**client_kwargs)
-
-  try:
-    predictions = client.image_classification(image=image_bytes, model=cleaned_model)
-  except Exception as exc:  # pragma: no cover - network/SDK errors
-    raise MLServiceError(f"Hugging Face inference failed: {exc}") from exc
-
-  serialised = _serialise_hf_predictions(predictions, top_k=top_k)
-  if not serialised:
-    raise MLServiceError("Hugging Face inference returned no predictions.")
-
-  top_prediction = serialised[0]
-  confidence = top_prediction.get("score") or 0.0
-  return {
-    "food": top_prediction.get("label") or "Meal",
-    "calories": 0,
-    "ingredients": [],
-    "nutrition_facts": {"calories": 0},
-    "confidence": round(confidence, 4),
-    "hf_predictions": serialised,
-    "notes": f"Hugging Face {cleaned_model}",
-  }
-
-
-__all__ = ["call_ml_service", "classify_food_with_hf", "MLServiceError"]
+__all__ = ["call_ml_service", "MLServiceError"]
