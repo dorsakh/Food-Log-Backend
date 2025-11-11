@@ -118,19 +118,23 @@ def _normalise_prediction(raw: Dict[str, Any]) -> Tuple[str, int, List[str], Dic
   if not isinstance(ingredients, list):
     ingredients = list(ingredients)
 
-  nutrition = raw.get("nutrition_facts")
-  if not isinstance(nutrition, dict):
-    carbs = round(calories * 0.5 / 4) if calories else 0
-    protein = round(calories * 0.25 / 4) if calories else 0
-    fat = round(calories * 0.25 / 9) if calories else 0
-    nutrition = {
-      "calories": calories,
+  def _estimated_macros(calorie_value: int) -> Dict[str, int]:
+    carbs = round(calorie_value * 0.5 / 4) if calorie_value else 0
+    protein = round(calorie_value * 0.25 / 4) if calorie_value else 0
+    fat = round(calorie_value * 0.25 / 9) if calorie_value else 0
+    return {
       "carbohydrates": carbs,
       "proteins": protein,
       "fats": fat,
     }
+
+  nutrition = raw.get("nutrition_facts")
+  if not isinstance(nutrition, dict):
+    nutrition = {"calories": calories, **_estimated_macros(calories)}
   else:
     nutrition.setdefault("calories", calories)
+    for key, value in _estimated_macros(nutrition.get("calories", calories)).items():
+      nutrition.setdefault(key, value)
 
   return food_name, calories, ingredients, nutrition
 
@@ -249,7 +253,7 @@ def _persist_sqlite(record: Dict[str, Any]) -> None:
         json.dumps(record["nutrition_facts"]),
         json.dumps(record["metadata"]),
         record["inference_source"],
-        record["ml_service_error"],
+        record.get("ml_service_error"),
         record["created_at"],
         record["consumed_at"],
       ),
