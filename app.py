@@ -10,6 +10,7 @@ SQLite or DynamoDB, and exposes an API for retrieving historical entries.
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
@@ -18,7 +19,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
 import boto3
@@ -26,6 +27,7 @@ from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory, abort
 from flask_cors import CORS
+import requests
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import jwt
@@ -47,6 +49,126 @@ USE_AWS_BACKEND = STORAGE_BACKEND == "aws"
 JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "change-me")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_MINUTES = int(os.environ.get("JWT_EXPIRATION_MINUTES", "60"))
+DEFAULT_HF_SPACE_URL = "https://huggingface.co/spaces/AnitaAnita2025/nateraw-food/+/api/predict/"
+
+
+def _safe_float(value: Optional[str], default: float) -> float:
+  try:
+    return float(value) if value is not None else default
+  except (TypeError, ValueError):
+    return default
+
+
+def _safe_int(value: Optional[str], default: int) -> int:
+  try:
+    return int(value) if value is not None else default
+  except (TypeError, ValueError):
+    return default
+
+
+def _normalise_confidence_value(value: float) -> float:
+  """Return confidence in the 0-1 range even if expressed as a percentage."""
+  if value > 1:
+    return min(1.0, value / 100.0)
+  if value < 0:
+    return 0.0
+  return value
+
+
+HF_SPACE_URL = (os.environ.get("HF_SPACE_URL") or os.environ.get("HF_FOOD_SPACE_URL") or DEFAULT_HF_SPACE_URL).strip()
+HF_CONFIDENCE_THRESHOLD = _normalise_confidence_value(_safe_float(os.environ.get("HF_CONFIDENCE_THRESHOLD"), 0.5))
+HF_SPACE_TIMEOUT = _safe_int(os.environ.get("HF_SPACE_TIMEOUT"), 45)
+HF_API_TOKEN = (
+  os.environ.get("HF_API_TOKEN")
+  or os.environ.get("HUGGING_FACE_TOKEN")
+  or os.environ.get("HUGGINGFACE_TOKEN")
+  or os.environ.get("HF_TOKEN")
+  or ""
+).strip()
+
+
+class HuggingFaceSpaceError(RuntimeError):
+  """Raised when Hugging Face classification cannot be completed."""
+
+
+def _extract_hf_label_score(payload: Any) -> Tuple[str, float]:
+  """Return the highest-confidence label emitted by the HF space."""
+  candidates: List[Tuple[str, float]] = []
+
+  def _register(label: Any, score: Any) -> None:
+    if not label or score is None:
+      return
+    try:
+      numeric_score = _normalise_confidence_value(float(score))
+    except (TypeError, ValueError):
+      return
+    candidates.append((str(label), numeric_score))
+
+  def _walk_list(items: Any) -> None:
+    if not isinstance(items, list):
+      return
+    for item in items:
+      if isinstance(item, dict):
+        label = item.get("label") or item.get("food") or item.get("class")
+        score = item.get("confidence") or item.get("score") or item.get("similarity")
+        if label and score is not None:
+          _register(label, score)
+          continue
+        _walk_list(item.get("confidences"))
+      elif isinstance(item, (list, tuple)):
+        if len(item) >= 2:
+          _register(item[0], item[1])
+      elif isinstance(item, str):
+        _register(item, 1.0)
+
+  if isinstance(payload, list):
+    _walk_list(payload)
+  else:
+    data_section = payload.get("data") if isinstance(payload, dict) else None
+    if isinstance(data_section, dict):
+      confidences = data_section.get("confidences")
+      if confidences:
+        _walk_list(confidences if isinstance(confidences, list) else [confidences])
+      else:
+        _register(
+          data_section.get("label") or data_section.get("food"),
+          data_section.get("confidence") or data_section.get("score"),
+        )
+    else:
+      _walk_list(data_section if isinstance(data_section, list) else payload if isinstance(payload, list) else [])
+
+  if not candidates:
+    raise HuggingFaceSpaceError("Hugging Face space response did not include confidences.")
+  return max(candidates, key=lambda candidate: candidate[1])
+
+
+def _call_hf_food_space(image_bytes: bytes) -> Tuple[str, float, Dict[str, Any]]:
+  """Invoke the Hugging Face space with the supplied image bytes."""
+  if not HF_SPACE_URL:
+    raise HuggingFaceSpaceError("Hugging Face space URL is not configured.")
+
+  encoded = base64.b64encode(image_bytes).decode("utf-8")
+  payload = {"data": [f"data:image/jpeg;base64,{encoded}"]}
+  headers = {"Content-Type": "application/json"}
+  if HF_API_TOKEN:
+    headers["Authorization"] = f"Bearer {HF_API_TOKEN}"
+
+  try:
+    response = requests.post(HF_SPACE_URL, headers=headers, json=payload, timeout=HF_SPACE_TIMEOUT)
+  except requests.RequestException as exc:
+    raise HuggingFaceSpaceError(f"Hugging Face request failed: {exc}") from exc
+
+  if not response.ok:
+    error_body = response.text[:200] if response.text else response.reason
+    raise HuggingFaceSpaceError(f"Hugging Face space returned {response.status_code}: {error_body}")
+
+  try:
+    parsed = response.json()
+  except ValueError as exc:
+    raise HuggingFaceSpaceError("Hugging Face space response was not JSON.") from exc
+
+  label, confidence = _extract_hf_label_score(parsed)
+  return label, confidence, parsed if isinstance(parsed, dict) else {"data": parsed}
 
 
 def _build_s3_client():
@@ -527,36 +649,73 @@ def create_app() -> Flask:
       local_path = _save_to_local_storage(binary_content, unique_name)
       image_url = urljoin(request.host_url, f"uploads/{local_path.name}")
 
+    hf_prediction: Tuple[str, float, Dict[str, Any]] | None = None
+    hf_error: str | None = None
+    if HF_SPACE_URL:
+      try:
+        hf_prediction = _call_hf_food_space(binary_content)
+      except HuggingFaceSpaceError as exc:
+        hf_error = str(exc)
+        app.logger.info("Hugging Face space unavailable: %s", exc)
+
     raw_prediction: Dict[str, Any] = {}
-    inference_source = "ml_service"
+    inference_source = "huggingface_space" if hf_prediction else "ml_service"
     ml_error: str | None = None
 
-    if ml_service_url:
-      try:
-        raw_prediction = call_ml_service(
-          binary_content,
-          metadata,
-          url=ml_service_url,
-          api_key=ml_service_api_key,
-        )
-      except MLServiceError as exc:
-        ml_error = str(exc)
-        inference_source = "local_fallback"
-        app.logger.warning("ML service call failed; falling back to local predictor: %s", exc)
-    else:
-      inference_source = "local_fallback"
-      ml_error = "ML service URL is not configured."
-      app.logger.info("ML service URL missing, using local predictor fallback.")
+    if hf_prediction:
+      hf_label, hf_confidence, hf_payload = hf_prediction
+      if hf_confidence < HF_CONFIDENCE_THRESHOLD:
+        return {
+          "error": "این غذا نیست",
+          "details": f"بالاترین اطمینان {hf_confidence * 100:.1f}% برای {hf_label}",
+          "confidence": hf_confidence,
+          "label": hf_label,
+          "threshold": HF_CONFIDENCE_THRESHOLD,
+        }, 422
 
-    if not raw_prediction or "food" not in raw_prediction:
-      temp_path = _write_temp_file(binary_content, unique_name)
-      try:
-        raw_prediction = predict_calories(str(temp_path)) or {}
-      except Exception as exc:  # pragma: no cover
-        app.logger.exception("Local prediction failed: %s", exc)
-        return {"error": "Prediction failed", "details": str(exc)}, 500
-      finally:
-        temp_path.unlink(missing_ok=True)
+      raw_prediction = predict_calories(unique_name) or {}
+      raw_prediction["food"] = hf_label
+      raw_prediction["confidence"] = hf_confidence
+      metadata["hf_space"] = {
+        "label": hf_label,
+        "confidence": hf_confidence,
+        "threshold": HF_CONFIDENCE_THRESHOLD,
+        "url": HF_SPACE_URL,
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+      }
+      for key in ("duration", "average_duration"):
+        if isinstance(hf_payload, dict) and key in hf_payload:
+          metadata["hf_space"][key] = hf_payload[key]
+    else:
+      if hf_error:
+        metadata["hf_space_error"] = hf_error
+
+      if ml_service_url:
+        try:
+          raw_prediction = call_ml_service(
+            binary_content,
+            metadata,
+            url=ml_service_url,
+            api_key=ml_service_api_key,
+          )
+        except MLServiceError as exc:
+          ml_error = str(exc)
+          inference_source = "local_fallback"
+          app.logger.warning("ML service call failed; falling back to local predictor: %s", exc)
+      else:
+        inference_source = "local_fallback"
+        ml_error = "ML service URL is not configured."
+        app.logger.info("ML service URL missing, using local predictor fallback.")
+
+      if not raw_prediction or "food" not in raw_prediction:
+        temp_path = _write_temp_file(binary_content, unique_name)
+        try:
+          raw_prediction = predict_calories(str(temp_path)) or {}
+        except Exception as exc:  # pragma: no cover
+          app.logger.exception("Local prediction failed: %s", exc)
+          return {"error": "Prediction failed", "details": str(exc)}, 500
+        finally:
+          temp_path.unlink(missing_ok=True)
 
     food_name, calories, ingredients, nutrition = _normalise_prediction(raw_prediction)
 

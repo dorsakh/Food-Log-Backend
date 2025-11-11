@@ -57,6 +57,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Image classified but the top result is below the configured confidence threshold.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LowConfidenceResponse"
         "500":
           $ref: "#/components/responses/ServerError"
   /auth/signup:
@@ -256,10 +262,13 @@ components:
           description: Timestamp representing when the meal was consumed.
         inference_source:
           type: string
-          description: Indicates whether the ML service or local fallback produced the result.
+          description: Indicates whether the Hugging Face space, remote ML service, or local fallback produced the result.
         ml_service_error:
           type: string
           description: Populated when the remote ML service call fails.
+      description: >
+        When the Hugging Face classifier succeeds, metadata contains an `hf_space` object with `label`, `confidence`,
+        `threshold`, and optional timing diagnostics. When it fails, `metadata.hf_space_error` captures the reason.
     StoredMeal:
       allOf:
         - $ref: "#/components/schemas/PredictionResponse"
@@ -290,6 +299,28 @@ components:
         details:
           type: string
           nullable: true
+    LowConfidenceResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: این غذا نیست
+        details:
+          type: string
+          example: بالاترین اطمینان 48.5% برای pizza
+        label:
+          type: string
+          description: Highest-ranked label returned by the classifier.
+        confidence:
+          type: number
+          format: float
+          description: Confidence expressed as a ratio between 0 and 1.
+          example: 0.485
+        threshold:
+          type: number
+          format: float
+          description: Active confidence threshold (ratio between 0 and 1).
+          example: 0.5
   responses:
     BadRequest:
       description: Request validation failed
