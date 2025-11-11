@@ -33,7 +33,7 @@ import jwt
 from jwt import ExpiredSignatureError, InvalidTokenError
 from api.image_metadata import extract_metadata
 from api.ml_predict import predict_calories
-from api.ml_service import MLServiceError, call_ml_service
+from api.ml_service import MLServiceError, call_ml_service, classify_food_with_hf
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOADS_DIR = Path(os.environ.get("UPLOADS_DIR", str(BASE_DIR / "uploads"))).resolve()
@@ -362,6 +362,13 @@ def create_app() -> Flask:
 
   ml_service_url = os.environ.get("ML_SERVICE_URL", "").strip()
   ml_service_api_key = os.environ.get("ML_SERVICE_API_KEY", "").strip() or None
+  hf_token = os.environ.get("HF_TOKEN", "").strip()
+  hf_model_id = os.environ.get("HF_MODEL_ID", "nateraw/food").strip()
+  hf_provider_hint = os.environ.get("HF_INFERENCE_PROVIDER", "auto").strip()
+  try:
+    hf_top_k = int(os.environ.get("HF_TOP_K", "5"))
+  except ValueError:
+    hf_top_k = 5
 
   def _unauthorized(message: str) -> None:
     response = jsonify({"error": message})
@@ -529,9 +536,23 @@ def create_app() -> Flask:
 
     raw_prediction: Dict[str, Any] = {}
     inference_source = "ml_service"
-    ml_error: str | None = None
+    error_messages: List[str] = []
 
-    if ml_service_url:
+    if hf_token and hf_model_id:
+      try:
+        raw_prediction = classify_food_with_hf(
+          binary_content,
+          api_key=hf_token,
+          model=hf_model_id,
+          provider=hf_provider_hint or None,
+          top_k=max(1, hf_top_k),
+        )
+        inference_source = f"huggingface:{hf_model_id}"
+      except MLServiceError as exc:
+        error_messages.append(str(exc))
+        app.logger.warning("Hugging Face inference failed, attempting next fallback: %s", exc)
+
+    if not raw_prediction and ml_service_url:
       try:
         raw_prediction = call_ml_service(
           binary_content,
@@ -539,13 +560,13 @@ def create_app() -> Flask:
           url=ml_service_url,
           api_key=ml_service_api_key,
         )
+        inference_source = "ml_service"
       except MLServiceError as exc:
-        ml_error = str(exc)
-        inference_source = "local_fallback"
+        error_messages.append(str(exc))
         app.logger.warning("ML service call failed; falling back to local predictor: %s", exc)
-    else:
-      inference_source = "local_fallback"
-      ml_error = "ML service URL is not configured."
+
+    if not raw_prediction and not ml_service_url:
+      error_messages.append("ML service URL is not configured.")
       app.logger.info("ML service URL missing, using local predictor fallback.")
 
     if not raw_prediction or "food" not in raw_prediction:
@@ -557,6 +578,8 @@ def create_app() -> Flask:
         return {"error": "Prediction failed", "details": str(exc)}, 500
       finally:
         temp_path.unlink(missing_ok=True)
+
+      inference_source = "local_fallback"
 
     food_name, calories, ingredients, nutrition = _normalise_prediction(raw_prediction)
 
@@ -573,10 +596,12 @@ def create_app() -> Flask:
       "nutrition_facts": nutrition,
       "metadata": metadata,
       "inference_source": inference_source,
-      "ml_service_error": ml_error,
       "created_at": created_at,
       "consumed_at": consumed_at,
     }
+
+    if error_messages:
+      record["ml_service_error"] = "; ".join(error_messages)
 
     if USE_AWS_BACKEND:
       try:
@@ -605,8 +630,8 @@ def create_app() -> Flask:
     }
     if user_id:
       payload["user_id"] = user_id
-    if ml_error:
-      payload["ml_service_error"] = ml_error
+    if error_messages:
+      payload["ml_service_error"] = "; ".join(error_messages)
 
     return payload, 200
 

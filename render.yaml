@@ -17,6 +17,12 @@ services:
         value: /data/uploads
       - key: SQLITE_DB_PATH
         value: /data/db/food_history.db
+      - key: HF_TOKEN
+        sync: false
+      - key: HF_MODEL_ID
+        value: nateraw/food
+      - key: HF_INFERENCE_PROVIDER
+        value: auto
     disk:
       name: persistent-data
       mountPath: /data

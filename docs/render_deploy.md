@@ -19,6 +19,9 @@ Environment variables Render uses (from `render.yaml`):
 - `ML_SERVICE_URL=stub` while the real ML service is unavailable.
 - `ML_SERVICE_API_KEY` (leave empty unless needed).
 - `JWT_SECRET_KEY` – set this in the Render dashboard (use `openssl rand -hex 32` locally to generate a strong value).
+- `HF_TOKEN` – add your Hugging Face access token (kept secret in Render).
+- `HF_MODEL_ID=nateraw/food` – default image classifier used for remote predictions.
+- `HF_INFERENCE_PROVIDER=auto` – let Hugging Face route the request; override if you prefer a specific provider.
 - TensorFlow and the training utilities are optional; runtime predictions now use synthetic data so the container no longer ships heavy ML dependencies. If you need to retrain models locally, install `tensorflow` manually before running `train_model.py`.
 
 ## 3. Deploy via Render Blueprint
@@ -44,11 +47,12 @@ curl -X POST https://<your-render-subdomain>.onrender.com/auth/signup \
   -d '{"email":"demo@foodlog.app","password":"Str0ngPass!"}'
 ```
 
-For predictions, call `/predict` with `multipart/form-data`. The response uses the stubbed ML output until a real service is configured.
+For predictions, call `/predict` with `multipart/form-data`. If you provide `HF_TOKEN`, the backend forwards meal photos to Hugging Face’s `nateraw/food` classifier; otherwise it falls back to the stubbed response.
 
 ## 5. Frontend configuration
 Update the frontend API base URL to the Render hostname (e.g., `https://foodlog-backend.onrender.com`). Once committed and pushed, redeploy the frontend in Vercel so both services point at the same backend.
 
 ## 6. Next steps
+- Supply `HF_TOKEN` to enable Hugging Face Inference Providers immediately; tweak `HF_MODEL_ID`/`HF_INFERENCE_PROVIDER` for different models or providers and redeploy to apply.
 - When the ML microservice is ready, update `ML_SERVICE_URL` (and optionally `ML_SERVICE_API_KEY`) in Render → **Environment** and trigger a redeploy.
 - If you later migrate to AWS or another provider, remove `render.yaml` or keep both deployment options side by side.
