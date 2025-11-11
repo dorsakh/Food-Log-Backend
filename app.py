@@ -399,6 +399,8 @@ def create_app() -> Flask:
     or os.environ.get("HF_API_TOKEN", "").strip()
     or os.environ.get("HF_TOKEN", "").strip()
     or os.environ.get("HF_SPACE_TOKEN", "").strip()
+    or os.environ.get("HF_READ_TOKEN", "").strip()
+    or os.environ.get("HF_WRITE_TOKEN", "").strip()
     or None
   )
 

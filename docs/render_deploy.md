@@ -18,7 +18,7 @@ Environment variables Render uses (from `render.yaml`):
 - `UPLOADS_DIR=/data/uploads` and `SQLITE_DB_PATH=/data/db/food_history.db` – both stored on the persistent disk so data survives restarts.
 - `ML_SERVICE_URL=stub` while the real ML service is unavailable.
 - `ML_SERVICE_API_KEY` (leave empty unless needed).
-- `HF_API_TOKEN` – required when calling Hugging Face’s hosted inference endpoint. Store it as a Render secret (do not commit).
+- `HF_API_TOKEN` (or `HF_READ_TOKEN`/`HF_WRITE_TOKEN`) – required when calling Hugging Face’s hosted inference endpoint. Store it as a Render secret (do not commit).
 - `JWT_SECRET_KEY` – set this in the Render dashboard (use `openssl rand -hex 32` locally to generate a strong value).
 - TensorFlow and the training utilities are optional; runtime predictions now use synthetic data so the container no longer ships heavy ML dependencies. If you need to retrain models locally, install `tensorflow` manually before running `train_model.py`.
 
@@ -51,5 +51,5 @@ For predictions, call `/predict` with `multipart/form-data`. The response uses t
 Update the frontend API base URL to the Render hostname (e.g., `https://foodlog-backend.onrender.com`). Once committed and pushed, redeploy the frontend in Vercel so both services point at the same backend.
 
 ## 6. Next steps
-- When switching to the Hugging Face predictor, set `ML_SERVICE_URL` to the HF endpoint and provide `HF_API_TOKEN` (or `ML_SERVICE_API_KEY`) in Render → **Environment**, then redeploy.
+- When switching to the Hugging Face predictor, set `ML_SERVICE_URL` to the HF endpoint and provide `HF_API_TOKEN` (or `HF_READ_TOKEN`/`HF_WRITE_TOKEN`/`ML_SERVICE_API_KEY`) in Render → **Environment**, then redeploy.
 - If you later migrate to AWS or another provider, remove `render.yaml` or keep both deployment options side by side.
