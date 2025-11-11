@@ -2,8 +2,7 @@ services:
   - type: web
     name: foodlog-backend
     env: docker
-    plan: free
-    region: oregon
+    plan: starter
     autoDeploy: true
     envVars:
       - key: STORAGE_BACKEND
