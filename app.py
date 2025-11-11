@@ -159,6 +159,7 @@ def _coerce_prediction_payload(raw: Any) -> Dict[str, Any]:
     }
     if label:
       result["raw_label"] = label
+      result["raw_label_score"] = score
     return result
 
   if isinstance(raw, dict):
@@ -601,6 +602,8 @@ def create_app() -> Flask:
     food_name, calories, ingredients, nutrition = _normalise_prediction(raw_prediction)
     resolved_food = str(raw_prediction.get("food") or food_name or "Meal")
     food_name = resolved_food
+    model_label = raw_prediction.get("raw_label")
+    model_score = raw_prediction.get("raw_label_score") or raw_prediction.get("confidence")
     ingredients = ["xxx", "xxx", "xxx"]
     display_calories = "xxx"
     display_nutrition = {
@@ -613,6 +616,9 @@ def create_app() -> Flask:
     created_at = datetime.now(timezone.utc).isoformat()
     consumed_at = _resolve_consumed_at(raw_consumed_at, created_at)
     metadata.setdefault("meal_date", consumed_at)
+    if model_label:
+      metadata["model_label"] = model_label
+      metadata["model_label_score"] = model_score
     record = {
       "id": uuid.uuid4().hex,
       "user_id": user_id,
@@ -653,6 +659,10 @@ def create_app() -> Flask:
       "inference_source": inference_source,
       "consumed_at": consumed_at,
     }
+    if model_label:
+      payload["model_label"] = model_label
+      if model_score is not None:
+        payload["model_label_score"] = model_score
     if user_id:
       payload["user_id"] = user_id
     if ml_error:
