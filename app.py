@@ -388,7 +388,14 @@ def create_app() -> Flask:
   CORS(app, resources={r"/*": {"origins": "*"}})
 
   ml_service_url = os.environ.get("ML_SERVICE_URL", "").strip()
-  ml_service_api_key = os.environ.get("ML_SERVICE_API_KEY", "").strip() or None
+  if not ml_service_url:
+    ml_service_url = "https://router.huggingface.co/hf-inference/models/nateraw/food"
+  ml_service_api_key = (
+    os.environ.get("ML_SERVICE_API_KEY", "").strip()
+    or os.environ.get("HF_API_TOKEN", "").strip()
+    or os.environ.get("HF_TOKEN", "").strip()
+    or None
+  )
 
   def _unauthorized(message: str) -> None:
     response = jsonify({"error": message})
@@ -589,8 +596,8 @@ def create_app() -> Flask:
 
     food_name, calories, ingredients, nutrition = _normalise_prediction(raw_prediction)
     ingredients = ingredients or []
-    calories = "xxx"
-    nutrition = {
+    display_calories = "xxx"
+    display_nutrition = {
       "calories": "xxx",
       "carbohydrates": "xxx",
       "proteins": "xxx",
@@ -632,9 +639,9 @@ def create_app() -> Flask:
     payload = {
       "image_url": image_url,
       "food": food_name,
-      "calories": calories,
+      "calories": display_calories,
       "ingredients": ingredients,
-      "nutrition_facts": nutrition,
+      "nutrition_facts": display_nutrition,
       "metadata": metadata,
       "timestamp": created_at,
       "inference_source": inference_source,
