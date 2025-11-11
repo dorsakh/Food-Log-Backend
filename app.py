@@ -36,11 +36,9 @@ from api.ml_predict import predict_calories
 from api.ml_service import MLServiceError, call_ml_service
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_HF_MODEL_URL = "https://router.huggingface.co/hf-inference/models/nateraw/food"
 UPLOADS_DIR = Path(os.environ.get("UPLOADS_DIR", str(BASE_DIR / "uploads"))).resolve()
 DB_PATH = Path(os.environ.get("SQLITE_DB_PATH", str(BASE_DIR / "food_history.db"))).resolve()
 
-load_dotenv(BASE_DIR / ".env")
 load_dotenv(BASE_DIR.parent / ".env")
 
 STORAGE_BACKEND = os.environ.get("STORAGE_BACKEND", "sqlite").strip().lower()
@@ -135,37 +133,6 @@ def _normalise_prediction(raw: Dict[str, Any]) -> Tuple[str, int, List[str], Dic
     nutrition.setdefault("calories", calories)
 
   return food_name, calories, ingredients, nutrition
-
-
-def _coerce_prediction_payload(raw: Any) -> Dict[str, Any]:
-  """
-  Normalise responses from different predictors (HF list vs. dict) into a dict.
-  """
-  if isinstance(raw, list):
-    best = raw[0] if raw else {}
-    label = str((best or {}).get("label") or "").strip()
-    score_raw = (best or {}).get("score")
-    try:
-      score = float(score_raw)
-    except (TypeError, ValueError):
-      score = 0.0
-    food_name = label if label and score >= 0.8 else "not food"
-    result = {
-      "food": food_name or "not food",
-      "confidence": score,
-      "ingredients": [],
-      "calories": 0,
-      "nutrition_facts": {},
-    }
-    if label:
-      result["raw_label"] = label
-      result["raw_label_score"] = score
-    return result
-
-  if isinstance(raw, dict):
-    return raw
-
-  return {}
 
 
 def _to_dynamo_compatible(value: Any) -> Any:
@@ -393,16 +360,8 @@ def create_app() -> Flask:
   app = Flask(__name__)
   CORS(app, resources={r"/*": {"origins": "*"}})
 
-  ml_service_url = os.environ.get("ML_SERVICE_URL", "").strip() or DEFAULT_HF_MODEL_URL
-  ml_service_api_key = (
-    os.environ.get("ML_SERVICE_API_KEY", "").strip()
-    or os.environ.get("HF_API_TOKEN", "").strip()
-    or os.environ.get("HF_TOKEN", "").strip()
-    or os.environ.get("HF_SPACE_TOKEN", "").strip()
-    or os.environ.get("HF_READ_TOKEN", "").strip()
-    or os.environ.get("HF_WRITE_TOKEN", "").strip()
-    or None
-  )
+  ml_service_url = os.environ.get("ML_SERVICE_URL", "").strip()
+  ml_service_api_key = os.environ.get("ML_SERVICE_API_KEY", "").strip() or None
 
   def _unauthorized(message: str) -> None:
     response = jsonify({"error": message})
@@ -574,13 +533,12 @@ def create_app() -> Flask:
 
     if ml_service_url:
       try:
-        service_response = call_ml_service(
+        raw_prediction = call_ml_service(
           binary_content,
           metadata,
           url=ml_service_url,
           api_key=ml_service_api_key,
         )
-        raw_prediction = _coerce_prediction_payload(service_response)
       except MLServiceError as exc:
         ml_error = str(exc)
         inference_source = "local_fallback"
@@ -593,8 +551,7 @@ def create_app() -> Flask:
     if not raw_prediction or "food" not in raw_prediction:
       temp_path = _write_temp_file(binary_content, unique_name)
       try:
-        local_response = predict_calories(str(temp_path)) or {}
-        raw_prediction = _coerce_prediction_payload(local_response)
+        raw_prediction = predict_calories(str(temp_path)) or {}
       except Exception as exc:  # pragma: no cover
         app.logger.exception("Local prediction failed: %s", exc)
         return {"error": "Prediction failed", "details": str(exc)}, 500
@@ -602,25 +559,10 @@ def create_app() -> Flask:
         temp_path.unlink(missing_ok=True)
 
     food_name, calories, ingredients, nutrition = _normalise_prediction(raw_prediction)
-    resolved_food = str(raw_prediction.get("food") or food_name or "Meal")
-    food_name = resolved_food
-    model_label = raw_prediction.get("raw_label")
-    model_score = raw_prediction.get("raw_label_score") or raw_prediction.get("confidence")
-    ingredients = ["xxx", "xxx", "xxx"]
-    display_calories = "xxx"
-    display_nutrition = {
-      "calories": "xxx",
-      "carbohydrates": "xxx",
-      "proteins": "xxx",
-      "fats": "xxx",
-    }
 
     created_at = datetime.now(timezone.utc).isoformat()
     consumed_at = _resolve_consumed_at(raw_consumed_at, created_at)
     metadata.setdefault("meal_date", consumed_at)
-    if model_label:
-      metadata["model_label"] = model_label
-      metadata["model_label_score"] = model_score
     record = {
       "id": uuid.uuid4().hex,
       "user_id": user_id,
@@ -653,18 +595,14 @@ def create_app() -> Flask:
     payload = {
       "image_url": image_url,
       "food": food_name,
-      "calories": display_calories,
+      "calories": calories,
       "ingredients": ingredients,
-      "nutrition_facts": display_nutrition,
+      "nutrition_facts": nutrition,
       "metadata": metadata,
       "timestamp": created_at,
       "inference_source": inference_source,
       "consumed_at": consumed_at,
     }
-    if model_label:
-      payload["model_label"] = model_label
-      if model_score is not None:
-        payload["model_label_score"] = model_score
     if user_id:
       payload["user_id"] = user_id
     if ml_error:

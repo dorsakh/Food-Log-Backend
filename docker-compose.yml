@@ -6,8 +6,6 @@ services:
     image: foodlog-backend:latest
     ports:
       - "5000:5000"
-    env_file:
-      - .env
     environment:
       STORAGE_BACKEND: sqlite
       ML_SERVICE_URL: ""
