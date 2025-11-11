@@ -40,6 +40,7 @@ DEFAULT_HF_MODEL_URL = "https://router.huggingface.co/hf-inference/models/natera
 UPLOADS_DIR = Path(os.environ.get("UPLOADS_DIR", str(BASE_DIR / "uploads"))).resolve()
 DB_PATH = Path(os.environ.get("SQLITE_DB_PATH", str(BASE_DIR / "food_history.db"))).resolve()
 
+load_dotenv(BASE_DIR / ".env")
 load_dotenv(BASE_DIR.parent / ".env")
 
 STORAGE_BACKEND = os.environ.get("STORAGE_BACKEND", "sqlite").strip().lower()
