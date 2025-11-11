@@ -135,6 +135,33 @@ def _normalise_prediction(raw: Dict[str, Any]) -> Tuple[str, int, List[str], Dic
   return food_name, calories, ingredients, nutrition
 
 
+def _coerce_prediction_payload(raw: Any) -> Dict[str, Any]:
+  """
+  Normalise responses from different predictors (HF list vs. dict) into a dict.
+  """
+  if isinstance(raw, list):
+    best = raw[0] if raw else {}
+    label = str((best or {}).get("label") or "").strip()
+    score_raw = (best or {}).get("score")
+    try:
+      score = float(score_raw)
+    except (TypeError, ValueError):
+      score = 0.0
+    food_name = label if label and score >= 0.8 else "not food"
+    return {
+      "food": food_name or "not food",
+      "confidence": score,
+      "ingredients": [],
+      "calories": 0,
+      "nutrition_facts": {},
+    }
+
+  if isinstance(raw, dict):
+    return raw
+
+  return {}
+
+
 def _to_dynamo_compatible(value: Any) -> Any:
   """Convert native Python types into structures acceptable by DynamoDB."""
   if isinstance(value, float):
@@ -533,12 +560,13 @@ def create_app() -> Flask:
 
     if ml_service_url:
       try:
-        raw_prediction = call_ml_service(
+        service_response = call_ml_service(
           binary_content,
           metadata,
           url=ml_service_url,
           api_key=ml_service_api_key,
         )
+        raw_prediction = _coerce_prediction_payload(service_response)
       except MLServiceError as exc:
         ml_error = str(exc)
         inference_source = "local_fallback"
@@ -551,7 +579,8 @@ def create_app() -> Flask:
     if not raw_prediction or "food" not in raw_prediction:
       temp_path = _write_temp_file(binary_content, unique_name)
       try:
-        raw_prediction = predict_calories(str(temp_path)) or {}
+        local_response = predict_calories(str(temp_path)) or {}
+        raw_prediction = _coerce_prediction_payload(local_response)
       except Exception as exc:  # pragma: no cover
         app.logger.exception("Local prediction failed: %s", exc)
         return {"error": "Prediction failed", "details": str(exc)}, 500
@@ -559,6 +588,14 @@ def create_app() -> Flask:
         temp_path.unlink(missing_ok=True)
 
     food_name, calories, ingredients, nutrition = _normalise_prediction(raw_prediction)
+    ingredients = ingredients or []
+    calories = "xxx"
+    nutrition = {
+      "calories": "xxx",
+      "carbohydrates": "xxx",
+      "proteins": "xxx",
+      "fats": "xxx",
+    }
 
     created_at = datetime.now(timezone.utc).isoformat()
     consumed_at = _resolve_consumed_at(raw_consumed_at, created_at)

@@ -78,6 +78,43 @@ _STUB_MEALS = [
 ]
 
 
+def _call_hf_inference_api(
+  image_bytes: bytes,
+  url: str,
+  api_key: Optional[str],
+  timeout: int,
+) -> Any:
+  """
+  Invoke the Hugging Face hosted inference API directly with image bytes.
+  """
+  headers = {
+    "Accept": "application/json",
+    "Content-Type": "application/octet-stream",
+  }
+  if api_key:
+    headers["Authorization"] = f"Bearer {api_key}"
+
+  try:
+    response = requests.post(url, headers=headers, data=image_bytes, timeout=timeout)
+  except requests.RequestException as exc:
+    raise MLServiceError(f"ML service request failed: {exc}") from exc
+
+  if not response.ok:
+    raise MLServiceError(
+      f"ML service responded with {response.status_code}: {response.text}"
+    )
+
+  try:
+    payload = response.json()
+  except ValueError as exc:
+    raise MLServiceError("ML service did not return JSON.") from exc
+
+  if isinstance(payload, dict) and payload.get("error"):
+    raise MLServiceError(payload.get("error", "ML service returned an error."))
+
+  return payload
+
+
 def _build_stub_prediction() -> Dict[str, Any]:
   """
   Generate a synthetic prediction payload when the real ML service is unavailable.
@@ -143,6 +180,9 @@ def call_ml_service(
   if stub_mode == "stub" or normalised_url in {"stub", "mock"} or normalised_url.startswith("stub://"):
     logger.info("Returning synthetic prediction from ML stub (mode=%s, url=%s).", stub_mode or "unset", url)
     return _build_stub_prediction()
+
+  if "huggingface.co" in normalised_url or "hf-inference" in normalised_url:
+    return _call_hf_inference_api(image_bytes, url, api_key, timeout)
 
   files = {
     "image": ("upload.jpg", image_bytes, "application/octet-stream"),
